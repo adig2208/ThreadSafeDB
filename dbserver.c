@@ -1,9 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include "proj2.h"
+#include "database.h"
 
 #define PORT 5000
 
@@ -44,8 +46,68 @@ void listener(int port) {
 
 void handle_work(int sock_fd) {
     struct request req;
-    read(sock_fd, &req, sizeof(req));
-    printf("Received op: %c, key: %s, len: %s\n", req.op_status, req.name, req.len);
+    struct request response;
+    char buf_write[4096];
+    char buf_read[4096];
+    int len;
+    int status;
+
+    if (read(sock_fd, &req, sizeof(req)) <=0) {
+        perror("Failed to read request");
+        return;
+    }
+
+    switch (req.op_status) {
+        case 'W':
+            len = atoi(req.len);
+            if (len > 4096) {
+                len = 4096;
+            }
+            if (read(sock_fd, buf_write, len) != len) {
+                perror("Failed to read provided data");
+                response.op_status = 'X';
+                break;
+            }
+            status = db_write(req.name, buf_write, len);
+            if (status == 0) {
+                response.op_status = 'K';
+            } else {
+                response.op_status = 'X';
+            }
+            snprintf(response.len, sizeof(response.len), "%d", 0);
+            break;
+        case 'R':
+            len = db_read(req.name, buf_read);
+            if (len > 0) {
+                response.op_status = 'K';
+                snprintf(response.len, sizeof(response.len), "%.7d", len);
+            } else {
+                response.op_status = 'X';
+                snprintf(response.len, sizeof(response.len), "%d", 0);
+            }
+            break;
+        case 'D':
+            status = db_delete(req.name);
+            if (status == 0) {
+                response.op_status = 'K';
+                snprintf(response.len, sizeof(response.len), "%d", 0);
+                break;
+            } 
+            response.op_status = 'X';
+            snprintf(response.len, sizeof(response.len), "%d", 0);
+            break;
+        default:
+            perror("invalid operation");
+            response.op_status = 'X';
+            snprintf(response.len, sizeof(response.len), "%d", 0);
+            break;
+    }
+
+    memset(response.name, 0 , sizeof(response.name));
+    write(sock_fd, &response, sizeof(response));
+    if (req.op_status == 'R' && response.op_status == 'K') {
+        write(sock_fd, buf_read, len);
+    }
 }
 
 int main() {
