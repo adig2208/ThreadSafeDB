@@ -4,15 +4,11 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+#include "database.h"
 
 #define INVALID 0
 #define BUSY 1
 #define VALID 2
-
-struct db_record {
-    char record_name[31];
-    int status;
-};
 
 struct db_record db_table[200];
 
@@ -21,6 +17,8 @@ int db_read(char *name, char *buf);
 int db_delete(char *name);
 int find_key(char *key);
 int free_index();
+int count_valid_objects();
+void db_cleanup(void);
 
 int find_key(char *key) {
     for (int i=0; i<200; i++) {
@@ -42,7 +40,7 @@ int free_index() {
     return -1;
 }
 
-int db_write(char *name, char *data, int len ) {
+int db_write(char *name, char *data, int len) {
     int index = find_key(name);
     if (index == -1) {
         index = free_index();
@@ -105,4 +103,24 @@ int db_delete(char *name) {
         return 0;
     }
     return -1;
+}
+
+int count_valid_objects() {
+    int count = 0;
+    for (int i = 0; i < 200; i++) {
+        if (db_table[i].status == VALID) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void db_cleanup(void) {
+    for (int index = 0; index < 200; index++) {
+        if (db_table[index].status == VALID || db_table[index].status == BUSY) {
+            char filename[64];
+            sprintf(filename, "/tmp/data.%d", index);
+            unlink(filename);
+        }
+    }
 }
