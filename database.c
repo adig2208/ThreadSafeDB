@@ -2,7 +2,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <errno.h>
 #include <fcntl.h>
 #include "database.h"
 
@@ -10,7 +9,7 @@
 #define BUSY 1
 #define VALID 2
 
-struct db_record db_table[200];
+struct db_record db_table[MAX_KEYS];
 
 int db_write(char *name, char *data, int len);
 int db_read(char *name, char *buf);
@@ -21,7 +20,7 @@ int count_valid_objects();
 void db_cleanup(void);
 
 int find_key(char *key) {
-    for (int i=0; i<200; i++) {
+    for (int i=0; i<MAX_KEYS; i++) {
         if (db_table[i].status == VALID) {
             if (strcmp(db_table[i].record_name,key) == 0) {
                 return i;
@@ -32,7 +31,7 @@ int find_key(char *key) {
 }
 
 int free_index() {
-    for (int i=0; i<200; i++) {
+    for (int i=0; i<MAX_KEYS; i++) {
         if (db_table[i].status == INVALID) {
             return i;
         } 
@@ -107,7 +106,7 @@ int db_delete(char *name) {
 
 int count_valid_objects() {
     int count = 0;
-    for (int i = 0; i < 200; i++) {
+    for (int i = 0; i < MAX_KEYS; i++) {
         if (db_table[i].status == VALID) {
             count++;
         }
@@ -116,11 +115,5 @@ int count_valid_objects() {
 }
 
 void db_cleanup(void) {
-    for (int index = 0; index < 200; index++) {
-        if (db_table[index].status == VALID || db_table[index].status == BUSY) {
-            char filename[64];
-            sprintf(filename, "/tmp/data.%d", index);
-            unlink(filename);
-        }
-    }
+    system("rm -f /tmp/data.*");
 }

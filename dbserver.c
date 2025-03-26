@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <errno.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -14,7 +13,7 @@
 #define PORT 5000
 #define WORKERS 4
 
-void handle_work(int sock_fd) ;
+void handle_work(int sock_fd);
 
 int stat_reads = 0;
 int stat_writes = 0;
@@ -25,6 +24,7 @@ pthread_mutex_t stat_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int shutdown_flag = 0;
 int listener_sock_fd = -1;
+int server_port = PORT;
 
 void* listener_thread(void *arg) {
     int port = *((int *)arg);
@@ -34,7 +34,7 @@ void* listener_thread(void *arg) {
         perror("Socket creation failed");
         exit(1);
     }
-    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(PORT), .sin_addr.s_addr = 0};
+    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(port), .sin_addr.s_addr = 0};
     setsockopt(listener_sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     if (bind(listener_sock_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("can't bind");
@@ -57,7 +57,7 @@ void* listener_thread(void *arg) {
         enqueue_work(fd);
     }
     close(listener_sock_fd);
-    printf("Listener exiting\n");
+    printf("Exiting\n");
     return NULL;
 }
 
@@ -77,6 +77,7 @@ void* worker_thread(void *arg) {
 void handle_work(int sock_fd) {
     struct request req;
     struct request response;
+    memset(&response, 0, sizeof(response));
     char buf_write[4096];
     char buf_read[4096];
     int len;
@@ -84,7 +85,20 @@ void handle_work(int sock_fd) {
 
     if (read(sock_fd, &req, sizeof(req)) <=0) {
         perror("Failed to read request");
+        close(sock_fd);
+        pthread_mutex_lock(&stat_mutex);
+        stat_failed++;
+        pthread_mutex_unlock(&stat_mutex);
         return;
+    }
+
+    if (req.op_status == 'Q') {
+        shutdown_flag = 1;
+        close(sock_fd);
+        queue_shutdown();
+        queue_cleanup();
+        db_cleanup();
+        exit(0);
     }
 
     switch (req.op_status) {
@@ -145,6 +159,8 @@ void handle_work(int sock_fd) {
     if (req.op_status == 'D') stat_deletes++;
     if (response.op_status == 'X') stat_failed++;
     pthread_mutex_unlock(&stat_mutex);
+
+    close(sock_fd);
 }
 
 void print_stats(void) {
@@ -159,14 +175,16 @@ void print_stats(void) {
     printf("Requests in queue: %d\n", queue_length());
 }
 
-int main() {
-    int port = PORT;
+int main(int argc, char *argv[]) {
+    if (argc > 1) {
+        server_port = atoi(argv[1]);
+    }
     queue_init();
 
     pthread_t listener_tid;
     pthread_t worker_tids[WORKERS];
 
-    if (pthread_create(&listener_tid, NULL, listener_thread, &port) != 0) {
+    if (pthread_create(&listener_tid, NULL, listener_thread, &server_port) != 0) {
         perror("pthread_create listener");
         exit(1);
     }
@@ -177,23 +195,24 @@ int main() {
         }
     }
     char line[128];
-    while (fgets(line, sizeof(line), stdin) != NULL) {
-        if (strncmp(line, "stats", 5) == 0) {
+    while (!shutdown_flag && fgets(line, sizeof(line), stdin) != NULL) { 
+        if (strcmp(line, "stats\n") == 0) {
             print_stats();
-        } else if (strncmp(line, "quit", 4) == 0) {
+        } else if (strcmp(line, "quit\n") == 0) {
             shutdown_flag = 1;
-            shutdown(listener_sock_fd, SHUT_RDWR);
+            close(listener_sock_fd);
             queue_shutdown();
+            queue_cleanup();
+            db_cleanup();
             break;
+        } else {
+            printf("Invalid command, Supported commands - stats, quit\n");
         }
     }
-    
     pthread_join(listener_tid, NULL);
     for (int i = 0; i < WORKERS; i++) {
         pthread_join(worker_tids[i], NULL);
     }
     
-    queue_cleanup();
-    db_cleanup();
     return 0;
 }
